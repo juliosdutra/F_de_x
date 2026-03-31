@@ -1,21 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Mar 30 17:36:37 2026
+Visualizador de Funções - Versão com Plotly
 @author: Julio Dutra
 """
 
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
 import sympy as sp
 from datetime import datetime
+import webbrowser
+import plotly.graph_objects as go
 
-data_hoje = datetime.now().strftime("%d/%m/%Y")
+# =========================
+# Configuração da página
+# =========================
+st.set_page_config(page_title="Visualizador de Funções", layout="wide")
 
 # =========================
 # Funções permitidas
 # =========================
-allowed_names = {
+ALLOWED = {
     "x": None,
     "sin": np.sin,
     "cos": np.cos,
@@ -27,121 +31,164 @@ allowed_names = {
     "abs": np.abs
 }
 
-def safe_eval(expr, x):
-    """Avaliação com validação básica via SymPy"""
+# =========================
+# Funções auxiliares
+# =========================
+@st.cache_data
+def gerar_dados(expr, x_min, x_max, n):
+    x = np.linspace(x_min, x_max, n)
+    y = avaliar(expr, x)
+    return x, y
+
+def avaliar(expr, x):
     try:
         sp.sympify(expr)
     except:
         raise ValueError("Expressão inválida")
 
-    local_dict = allowed_names.copy()
-    local_dict["x"] = x
-    return eval(expr, {"__builtins__": {}}, local_dict)
+    local = ALLOWED.copy()
+    local["x"] = x
+
+    y = eval(expr, {"__builtins__": {}}, local)
+
+    return np.nan_to_num(y, nan=np.nan, posinf=np.nan, neginf=np.nan)
+
+def encontrar_zeros(x, y):
+    zeros = []
+    for i in range(len(y) - 1):
+        if np.sign(y[i]) != np.sign(y[i+1]) and y[i+1] != y[i]:
+            x0 = x[i] - y[i] * (x[i+1] - x[i]) / (y[i+1] - y[i])
+            zeros.append(x0)
+    return zeros
+
+def plotar_funcao_plotly(x, y, expr_sym, zeros, mostrar_zeros):
+    fig = go.Figure()
+
+    # Curva principal
+    label = "f(x)"
+
+    fig.add_trace(go.Scatter(
+        x=x,
+        y=y,
+        mode='lines',
+        name=label
+    ))
+
+    # Eixos
+    fig.add_hline(y=0, line_width=1)
+    fig.add_vline(x=0, line_width=1)
+
+    # Zeros
+    if mostrar_zeros and zeros:
+        fig.add_trace(go.Scatter(
+            x=zeros,
+            y=[0]*len(zeros),
+            mode='markers',
+            name='Zeros',
+            marker=dict(size=8)
+        ))
+
+    fig.update_layout(
+        xaxis_title="x",
+        yaxis_title="f(x)",
+        template="plotly_white",
+        hovermode="closest"
+    )
+
+    return fig
 
 # =========================
-# Interface
+# SIDEBAR
 # =========================
-st.title("📈 Visualizador de Funções")
+st.sidebar.markdown("**Engenharia Química - UFES (Alegre)**")
+st.sidebar.markdown("---")
 
-st.markdown(
-"""
-Digite uma função de uma variável `x` usando sintaxe do Python.
+expr = st.sidebar.text_input("Função f(x):", " sin(x) * exp(-0.1*x**2) + 0.3*cos(3*x)")
 
-### 🧠 Exemplos
+x_min = st.sidebar.number_input("x mínimo", value=-10.0)
+x_max = st.sidebar.number_input("x máximo", value=10.0)
 
-- `3*x**2`  → $3x^2$  
-- `sin(x)`  → $\sin(x)$  
-- `exp(-x)*cos(2*x)`  → $e^{-x}\cos(2x)$  
-- `sqrt(abs(x))`  → $\sqrt{|x|}$  
+num_points = st.sidebar.slider("Número de pontos", 100, 5000, 500)
 
----
+mostrar_zeros = st.sidebar.checkbox("Mostrar zeros", True)
 
-### ⚠️ Atenção
+st.sidebar.markdown("---")
 
-- Use `*` para multiplicação → `3*x`  
-- Use `**` para potência → `x**2`  
-- Funções disponíveis: `sin`, `cos`, `tan`, `exp`, `log`, `sqrt`, `abs`
+col1, col2, col3 = st.sidebar.columns([1, 2, 1])
+with col2:
+    if st.button("🌐 Acessar UFES"):
+        webbrowser.open("https://www.ufes.br")
 
----
-"""
-)
+    st.markdown(
+        f"""
+        <hr>
+        <div style="text-align:center; font-size:0.9em; color:gray;">
+        Julio Dutra · julio.dutra@ufes.br  </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-# Entrada do usuário
-expr = st.text_input("Função f(x):", value="sin(x)")
 
-# Conversão para LaTeX
+
+# =========================
+# MAIN
+# =========================
+st.title("📈 Visualizador de Funções (Plotly)")
+
+# ---- LaTeX ----
+expr_sym = None
 try:
     x_sym = sp.symbols('x')
     expr_sym = sp.sympify(expr)
-    st.write("Forma matemática:")
+
+    st.markdown("### 📐 Expressão matemática")
     st.latex(sp.latex(expr_sym))
+
 except:
-    st.warning("Expressão não pôde ser convertida para LaTeX")
+    st.warning("Expressão inválida")
 
-# Domínio
-col1, col2 = st.columns(2)
-with col1:
-    x_min = st.number_input("x mínimo", value=-10.0)
-with col2:
-    x_max = st.number_input("x máximo", value=10.0)
+# ---- Processamento ----
+try:
+    with st.spinner("Calculando..."):
+        x, y = gerar_dados(expr, x_min, x_max, num_points)
 
-num_points = st.slider("Número de pontos", 100, 5000, 500)
+    if np.any(np.isnan(y)):
+        st.warning("A função possui pontos indefinidos no domínio.")
 
-# =========================
-# Plot
-# =========================
-if st.button("Plotar função"):
+    zeros = encontrar_zeros(x, y)
 
-    try:
-        x = np.linspace(x_min, x_max, num_points)
-        y = safe_eval(expr, x)
+    # ---- Plot ----
+    st.markdown("### 📊 Gráfico")
+    col1, col2, col3 = st.columns([1, 4, 1])
 
-        # Tratamento numérico
-        y = np.nan_to_num(y, nan=np.nan, posinf=np.nan, neginf=np.nan)
+    with col2:
+        fig = plotar_funcao_plotly(x, y, expr_sym, zeros, mostrar_zeros)
+        st.plotly_chart(fig, use_container_width=True)
 
-        # Alerta de domínio
-        if np.any(np.isnan(y)):
-            st.warning("A função possui pontos indefinidos no domínio informado.")
+    # ---- Zeros ----
+    if mostrar_zeros:
+        if zeros:
+            st.markdown("### 📍 Zeros aproximados")
+            st.write([round(z, 4) for z in zeros])
+        else:
+            st.info("Nenhum zero encontrado no intervalo.")
 
-        # Gráfico
-        fig, ax = plt.subplots(figsize=(8,4))
-        
-        ax.axhline(0, color='k')
-        ax.axvline(0, color='k')
-        
-        ax.plot(x, y, label=f"$f(x) = {sp.latex(expr_sym)}$")
-        
-        
-        
-        ax.set_xlabel("x")
-        ax.set_ylabel("f(x)")
-        ax.grid(True)
-        ax.legend()
+    st.toast("Gráfico atualizado", icon="📈")
 
-        st.pyplot(fig)
-        
-    except Exception as e:
-        st.error(f"Erro ao avaliar a função: {e}")
+except Exception as e:
+    st.error(f"Erro: {e}")
 
 # =========================
 # Rodapé
 # =========================
+data = datetime.now().strftime("%d/%m/%Y")
+
 st.markdown(
     f"""
-    <hr style="margin-top:50px;">
-    <div style="text-align: center; font-size: 0.9em; color: gray;">
-        Desenvolvido por <b>Julio Dutra</b> · Engenharia Química · UFES <br>
-        📧 julio.dutra@ufes.br <br>
-        📅 {data_hoje}
+    <hr>
+    <div style="text-align:center; font-size:0.9em; color:gray;">
+    Julio Dutra · UFES · julio.dutra@ufes.br · {data}
     </div>
     """,
     unsafe_allow_html=True
 )
-
-
-col1, col2, col3 = st.columns([1,2,1])
-with col2:
-    st.image(
-        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExZDdpaXlqbHA4MXM0N3oydXVvdzRua2VvYWRmamZvODZsNTRmbjYzbCZlcD12MV9naWZzX3NlYXJjaCZjdD1n/7ZoMAYSgQJ8oe5gCYE/giphy.gif",
-        width=300
-    )
