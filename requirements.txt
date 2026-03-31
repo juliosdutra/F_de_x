@@ -3,3 +3,4 @@ numpy
 matplotlib
 sympy
 datetime
+plotly
